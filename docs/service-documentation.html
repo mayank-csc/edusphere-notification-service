@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Notification Service — EduSphere</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f7fa; color: #2d3748; line-height: 1.6; }
+  header { background: linear-gradient(135deg, #43e97b, #38f9d7); color: white; padding: 32px 40px; }
+  header h1 { font-size: 28px; font-weight: 700; }
+  header p  { font-size: 15px; opacity: 0.9; margin-top: 6px; }
+  .badge { display: inline-block; background: rgba(255,255,255,0.2); border-radius: 20px; padding: 3px 12px; font-size: 13px; margin-top: 10px; margin-right: 6px; }
+  main { max-width: 1100px; margin: 30px auto; padding: 0 20px; }
+  section { background: white; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); margin-bottom: 28px; overflow: hidden; }
+  .section-header { background: #059669; color: white; padding: 14px 24px; font-size: 16px; font-weight: 600; }
+  .section-body { padding: 24px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { background: #ecfdf5; color: #064e3b; padding: 10px 14px; text-align: left; font-weight: 600; border-bottom: 2px solid #a7f3d0; }
+  td { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafafa; }
+  code { background: #f1f5f9; padding: 2px 7px; border-radius: 4px; font-size: 13px; color: #d63384; font-family: 'Courier New', monospace; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 18px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.7; }
+  .mermaid { background: #f0fdf4; border-radius: 8px; padding: 20px; border: 1px solid #a7f3d0; overflow-x: auto; }
+  h4 { color: #064e3b; margin: 16px 0 8px; font-size: 14px; }
+  p { margin-bottom: 10px; font-size: 14px; }
+  .warning { background: #fff7ed; border: 1px solid #fdba74; border-radius: 6px; padding: 12px 16px; font-size: 14px; color: #9a3412; margin: 12px 0; }
+  .info { background: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; padding: 12px 16px; font-size: 14px; color: #1e40af; margin: 12px 0; }
+  ol { padding-left: 20px; font-size: 14px; }
+  ol li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📧 Notification Service</h1>
+  <p>Sends HTML welcome emails to newly onboarded tenant admins via SMTP. Final step of the onboarding saga.</p>
+  <span class="badge">Port: 8095</span>
+  <span class="badge">MySQL: edusphere_notification_db</span>
+  <span class="badge">SMTP / JavaMail</span>
+  <span class="badge">Thymeleaf Templates</span>
+</header>
+
+<main>
+
+  <section>
+    <div class="section-header">Overview</div>
+    <div class="section-body">
+      <p>The <strong>Notification Service</strong> is the final step of the tenant onboarding saga. It sends a rich HTML welcome email to the newly onboarded tenant admin using <strong>SMTP (Gmail)</strong> via <strong>Thymeleaf</strong> email templates.</p>
+      <p><strong>Key responsibilities:</strong></p>
+      <ul style="padding-left:20px;font-size:14px;">
+        <li>Listen for <code>NOTIFICATION_REQUESTED</code> Kafka events and send HTML welcome emails</li>
+        <li>Render emails using Thymeleaf templates with institution name, subdomain, and login URL</li>
+        <li>Log every notification attempt (success or failure) to the <code>notification_logs</code> table</li>
+        <li><strong>Important:</strong> A notification failure does <em>not</em> roll back the saga — onboarding is still marked <code>COMPLETED</code></li>
+        <li>Stores notification records in <strong>MySQL</strong> database <code>edusphere_notification_db</code> (port <code>8095</code>)</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-header">Service Flow</div>
+    <div class="section-body">
+      <div class="mermaid">
+flowchart TD
+    KIN[Kafka: NOTIFICATION_REQUESTED] --> LOG[Save NotificationLog - PENDING]
+    LOG --> BUILD[Build HTML from Thymeleaf template\nwelcome-email.html]
+    BUILD --> SEND[Send via JavaMailSender - SMTP]
+    SEND --> OK{Email\nDelivered?}
+    OK -->|Yes| UPD[Update log status = SENT\nSet sentAt timestamp]
+    UPD --> PUB[Publish NOTIFICATION_SENT]
+    OK -->|No| FAIL[Update log status = FAILED\nSave error message]
+    FAIL --> PUB2[Publish NOTIFICATION_FAILED]
+
+    NOTE[NOTE: NOTIFICATION_FAILED does NOT\nroll back the onboarding saga.\nOnboarding is still COMPLETED.] -.-> PUB2
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-header">Email Template Variables</div>
+    <div class="section-body">
+      <div class="info">ℹ️ The HTML email is built using Thymeleaf (<code>welcome-email.html</code>) with the following variables injected from the Kafka payload.</div>
+      <br/>
+      <table>
+        <thead><tr><th>Variable</th><th>Source</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>recipientName</code></td><td>Kafka payload</td><td>Admin's full name (firstName + lastName)</td></tr>
+          <tr><td><code>institutionName</code></td><td>Kafka payload</td><td>School/institution name</td></tr>
+          <tr><td><code>subdomain</code></td><td>Kafka payload</td><td>Assigned subdomain</td></tr>
+          <tr><td><code>username</code></td><td>Kafka payload</td><td>Admin login username (email)</td></tr>
+          <tr><td><code>loginUrl</code></td><td>Generated</td><td><code>https://{subdomain}.edusphere.io/login</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-header">Kafka Events</div>
+    <div class="section-body">
+      <h4>Consumes from <code>edusphere.notification</code></h4>
+      <table>
+        <thead><tr><th>Event Type</th><th>Payload Fields</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><code>NOTIFICATION_REQUESTED</code></td><td><code>recipientEmail</code>, <code>recipientName</code>, <code>institutionName</code>, <code>subdomain</code>, <code>username</code>, <code>tenantId</code></td><td>Sends HTML welcome email via SMTP</td></tr>
+        </tbody>
+      </table>
+      <br/>
+      <h4>Produces to <code>edusphere.notification</code></h4>
+      <table>
+        <thead><tr><th>Event Type</th><th>Payload Fields</th><th>When Published</th></tr></thead>
+        <tbody>
+          <tr><td><code>NOTIFICATION_SENT</code></td><td><code>recipientEmail</code>, <code>notificationId</code></td><td>Email delivered successfully</td></tr>
+          <tr><td><code>NOTIFICATION_FAILED</code></td><td><code>reason</code>, <code>recipientEmail</code></td><td>SMTP error or template rendering error</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-header">Database — edusphere_notification_db</div>
+    <div class="section-body">
+      <h4>Table: notification_logs</h4>
+      <table>
+        <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>BIGINT PK AUTO_INCREMENT</td><td>No</td><td>—</td><td>Primary key</td></tr>
+          <tr><td><code>saga_id</code></td><td>VARCHAR</td><td>No</td><td>—</td><td>Saga ID from onboarding</td></tr>
+          <tr><td><code>recipient_email</code></td><td>VARCHAR</td><td>No</td><td>—</td><td>Email address of recipient</td></tr>
+          <tr><td><code>subject</code></td><td>VARCHAR</td><td>No</td><td>—</td><td>Email subject line</td></tr>
+          <tr><td><code>status</code></td><td>VARCHAR</td><td>No</td><td><code>PENDING</code></td><td>PENDING / SENT / FAILED</td></tr>
+          <tr><td><code>error_message</code></td><td>VARCHAR(1000)</td><td>Yes</td><td>NULL</td><td>Error details if sending failed</td></tr>
+          <tr><td><code>created_at</code></td><td>DATETIME</td><td>No</td><td>—</td><td>Record creation time</td></tr>
+          <tr><td><code>sent_at</code></td><td>DATETIME</td><td>Yes</td><td>NULL</td><td>Actual email delivery time</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-header">Gmail SMTP Setup</div>
+    <div class="section-body">
+      <div class="warning">⚠️ Do not use your regular Gmail password. You must generate an <strong>App Password</strong>.</div>
+      <br/>
+      <ol>
+        <li>Enable <strong>2-Factor Authentication</strong> on the Gmail account</li>
+        <li>Go to: <strong>Google Account → Security → App Passwords</strong></li>
+        <li>Create an app password for "Mail"</li>
+        <li>Use that 16-character app password in <code>MAIL_PASSWORD</code></li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-header">Configuration</div>
+    <div class="section-body">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>NOTIFICATION_SERVER_PORT</code></td><td><code>8095</code></td><td>Service port</td></tr>
+          <tr><td><code>NOTIFICATION_DB_URL</code></td><td><code>jdbc:mysql://localhost:3306/edusphere_notification_db</code></td><td>MySQL URL</td></tr>
+          <tr><td><code>NOTIFICATION_DB_USERNAME</code></td><td><code>notification_user</code></td><td>DB username</td></tr>
+          <tr><td><code>NOTIFICATION_DB_PASSWORD</code></td><td><code>notification_password</code></td><td>DB password</td></tr>
+          <tr><td><code>KAFKA_BOOTSTRAP_SERVERS</code></td><td><code>localhost:29092</code></td><td>Kafka brokers</td></tr>
+          <tr><td><code>MAIL_HOST</code></td><td><code>smtp.gmail.com</code></td><td>SMTP server</td></tr>
+          <tr><td><code>MAIL_PORT</code></td><td><code>587</code></td><td>SMTP port (TLS)</td></tr>
+          <tr><td><code>MAIL_USERNAME</code></td><td><code>your-email@gmail.com</code></td><td>Gmail address</td></tr>
+          <tr><td><code>MAIL_PASSWORD</code></td><td><em>required</em></td><td>Gmail App Password (16 chars)</td></tr>
+          <tr><td><code>MAIL_FROM</code></td><td><code>noreply@edusphere.io</code></td><td>From address shown in emails</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'default' });</script>
+</body>
+</html>
